@@ -1,0 +1,464 @@
+---
+title: "Homework 1"
+author: "Zhiheng Deng"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: flatly
+    highlight: zenburn
+    number_sections: true
+    toc: true
+    toc_float: true
+    code_folding: show
+  word_document:
+    toc: true
+editor: visual
+---
+
+```{r}
+#| label: load-libraries
+#| echo: false # This option disables the printing of code (only output is displayed).
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(nycflights13)
+library(skimr)
+
+```
+
+# Data Manipulation `nycflights13`
+
+## Problem 1: What months had the highest and lowest proportion of cancelled flights? Interpret any seasonal patterns.
+
+To determine if a flight was cancelled use the following code
+
+```{r}
+
+# What months had the highest and lowest % of cancelled flights?
+
+flights %>% 
+  filter(is.na(dep_time)) 
+
+# Create summary table of cancellation rate by month
+cancel_summary <- flights %>%
+  mutate(cancelled = is.na(dep_time)) %>%
+  group_by(month) %>%
+  summarise(
+    total_flights = n(),
+    cancelled_flights = sum(cancelled),
+    cancellation_rate = cancelled_flights / total_flights
+  )
+
+# View the summary table (optional)
+cancel_summary
+
+# Plot cancellation rate by month
+ggplot(cancel_summary, aes(x = month, y = cancellation_rate)) +
+  geom_col(fill = "tomato") +
+  labs(
+    title = "Proportion of Cancelled Flights by Month (2013)",
+    x = "Month",
+    y = "Cancellation Rate"
+  ) +
+  theme_minimal()
+
+###From the chart, You can see that February is the month with the most cancellations overall, undoubtedly a product of the season being the middle of winter. September and October have smallest, indicating calming in the operational/environmental conditions. There’s a smaller spike in December, maybe reflecting holiday congestion or winter storms.
+
+
+
+
+
+
+```
+
+## Problem 2: What plane (specified by the `tailnum` variable) traveled the most times from New York City airports in 2013?
+
+Please `left_join()` the resulting table with the table `planes` (also included in the `nycflights13` package).
+
+For the plane with the greatest number of flights and that had more than 50 seats, please create a table where it flew to during 2013.
+
+```{r}
+# Step 1: Count flights per tailnum and join with plane info
+joined_planes <- flights %>%
+  filter(!is.na(tailnum)) %>%
+  group_by(tailnum) %>%
+  summarise(flight_count = n()) %>%
+  left_join(planes, by = "tailnum") %>%
+  filter(!is.na(seats), seats > 50) %>%  # ensure commercial planes
+  arrange(desc(flight_count))
+
+# View the most active plane with valid plane info
+head(joined_planes, 1)
+
+# Step 2: Save the most active tailnum
+top_tail <- joined_planes$tailnum[1]
+
+# Step 3: Find where this plane flew
+flights %>%
+  filter(tailnum == top_tail) %>%
+  group_by(dest) %>%
+  summarise(n_flights = n()) %>%
+  arrange(desc(n_flights))
+
+###The plane with the highest amount of flights and all plane data was the tail number N328...`, a Boeing 767. It had completed 393 flights by the end of 2013. Most were to LAX (313 flights), followed by SFO and several others. This leads one to believe that it probably served some common cross-country service.
+
+
+
+```
+
+## Problem 3: Use the `flights` and `planes` tables to answer the following questions:
+
+```         
+-   How many planes have a missing date of manufacture?
+-   What are the five most common manufacturers?
+-   Has the distribution of manufacturer changed over time as reflected by the airplanes flying from NYC in 2013? (Hint: you may need to use case_when() to recode the manufacturer name and collapse rare vendors into a category called Other.)
+```
+
+```{r}
+# Q3.1: How many planes have a missing date of manufacture?
+missing_manufacture <- planes %>% 
+  filter(is.na(year)) %>% 
+  count()
+
+missing_manufacture
+
+
+# Q3.2: What are the five most common manufacturers?
+common_manufacturers <- planes %>% 
+  filter(!is.na(manufacturer)) %>% 
+  count(manufacturer, sort = TRUE) %>% 
+  slice_head(n = 5)
+
+common_manufacturers
+
+# Save top 5 for recoding
+top5 <- common_manufacturers$manufacturer
+
+# Join flights and recode manufacturer
+flights_planes <- flights %>%
+  left_join(planes %>% select(tailnum, manufacturer), by = "tailnum") %>%
+  mutate(manufacturer_rec = case_when(
+    manufacturer %in% top5 ~ manufacturer,
+    TRUE ~ "Other"
+  ))
+
+# Monthly distribution of flights by manufacturer (proportion)
+monthly_manufacturer_dist <- flights_planes %>%
+  filter(!is.na(manufacturer_rec)) %>%
+  group_by(month, manufacturer_rec) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(month) %>%
+  mutate(pct = count / sum(count)) %>%
+  arrange(month, desc(pct))
+
+monthly_manufacturer_dist
+
+# Bonus: Plot the manufacturer distribution by month
+ggplot(monthly_manufacturer_dist, aes(x = factor(month), y = pct, fill = manufacturer_rec)) +
+  geom_col(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    title = "Monthly Distribution of Aircraft Manufacturers (2013)",
+    x = "Month", y = "Proportion of Flights",
+    fill = "Manufacturer"
+  ) +
+  theme_minimal()
+
+##Out of the full dataset, 70 of the planes' manufacture year is unknown.
+
+##The top five manufacturers are: BOEING, AIRBUS INDUSTRIE, BOMBARDIER INC, AIRBUS, and EMBRAER.
+
+##Upon aggregating the other manufacturers into the “Other” category, we can see that, outside of other manufacturers, BOEING has gained in market share for most of the year, and that other manufacturers have stayed the same or declined in market share. That's proof of Boeing's dominance in NYC-origin flights for 2013.
+
+
+
+
+
+
+```
+
+## Problem 4: Which carriers service the route to San Francisco International (SFO).
+
+Join the `flights` and `airlines` tables and count which airlines flew the most to SFO. Produce a new dataframe, `fly_into_sfo` that contains three variables: the `name` of the airline, e.g., `United Air Lines Inc.` not `UA`, the count (number) of times it flew to SFO, and the `percent` of the trips that that particular airline flew to SFO.
+
+```{r}
+# Step 1: Filter flights going to SFO and join airline names
+fly_into_sfo <- flights %>%
+  filter(dest == "SFO") %>%
+  left_join(airlines, by = "carrier") %>%
+  group_by(name) %>%
+  summarise(count = n()) %>%
+  mutate(percent = count / sum(count) * 100) %>%
+  arrange(desc(count))
+
+# View result
+fly_into_sfo
+
+
+```
+
+And here is some bonus ggplot code to plot your dataframe
+
+```{r}
+#| label: ggplot-flights-toSFO
+#| message: false
+#| warning: false
+#| eval: false
+
+
+fly_into_sfo %>% 
+  
+  # sort 'name' of airline by the numbers it times to flew to SFO
+  mutate(name = fct_reorder(name, count)) %>% 
+  
+  ggplot() + 
+  
+  aes(x = count, 
+      y = name) +
+  
+  # a simple bar/column plot
+  geom_col() +
+  
+  # add labels, so each bar shows the % of total flights 
+  geom_text(aes(label = percent),
+             hjust = 1, 
+             colour = "white", 
+             size = 5)+
+  
+  # add labels to help our audience  
+  labs(title="Which airline dominates the NYC to SFO route?", 
+       subtitle = "as % of total flights in 2013",
+       x= "Number of flights",
+       y= NULL) +
+  
+  theme_minimal() + 
+  
+  # change the theme-- i just googled those , but you can use the ggThemeAssist add-in
+  # https://cran.r-project.org/web/packages/ggThemeAssist/index.html
+  
+  theme(#
+    # so title is left-aligned
+    plot.title.position = "plot",
+    
+    # text in axes appears larger        
+    axis.text = element_text(size=12),
+    
+    # title text is bigger
+    plot.title = element_text(size=18)
+      ) +
+
+  # add one final layer of NULL, so if you comment out any lines
+  # you never end up with a hanging `+` that awaits another ggplot layer
+  NULL
+
+##United Air Lines Inc. had the most flights, with 6,819 flights on 51.2% of all flights to SFO. Other airlines also following closely: Virgin America with 16.5%, Delta with 13.9%, American Airlines with 10.7%, and JetBlue with 7.8%.
+ 
+ 
+```
+
+## Problem 5: Cancellations of flights to SFO.
+
+We create a new dataframe `cancellations` as follows
+
+```{r}
+
+cancellations <- flights %>% 
+  
+  # just filter for destination == 'SFO'
+  filter(dest == 'SFO') %>% 
+  
+  # a cancelled flight is one with no `dep_time` 
+  filter(is.na(dep_time))
+
+###For this plot, I would: Begin with the flights dataFrame Filter for flights where dest == "SFO" to consider only flights that are on their way to San Francisco Then filter a bit more on is. na(dep_time) to only filter the ones that never left. Then you can Join with the airlines dataset using left_join() and obtain the complete carrier name. Then Read in the month part of the flights data with month = month(time_hour) or use the month column if present already. Also, Group by the data by origin, carrier (or the airline name), and month. Then count the number of cancellations in each group using summarise(n = n()). Finally,Plot the data using ggplot():- X-axis: month- Y-axis: n (number of cancellations)- Use geom_col() for the bars- Add facet_grid(carrier ~ origin) to split the plot into a grid by carrier and origin airport- Optionally, geom_text() to display the count on top of each bar.
+
+
+```
+
+# Rents in San Francsisco 2000-2018
+
+[Kate Pennington](https://www.katepennington.org/data) created a panel of historic Craigslist rents by scraping posts archived by the Wayback Machine. You can read more about her work here
+
+[What impact does new housing have on rents, displacement, and gentrification in the surrounding neighborhood? Read our interview with economist Kate Pennington about her article, "Does Building New Housing Cause Displacement?:The Supply and Demand Effects of Construction in San Francisco."](https://matrix.berkeley.edu/research-article/kate-pennington-on-gentrification-and-displacement-in-san-francisco/)
+
+In our case, we have a clean(ish) dataset with about 200K rows that correspond to Craigslist listings for renting properties in the greater SF area. The data dictionary is as follows
+
+| variable    | class     | description           |
+|-------------|-----------|-----------------------|
+| post_id     | character | Unique ID             |
+| date        | double    | date                  |
+| year        | double    | year                  |
+| nhood       | character | neighborhood          |
+| city        | character | city                  |
+| county      | character | county                |
+| price       | double    | price in USD          |
+| beds        | double    | n of beds             |
+| baths       | double    | n of baths            |
+| sqft        | double    | square feet of rental |
+| room_in_apt | double    | room in apartment     |
+| address     | character | address               |
+| lat         | double    | latitude              |
+| lon         | double    | longitude             |
+| title       | character | title of listing      |
+| descr       | character | description           |
+| details     | character | additional details    |
+
+The dataset was used in a recent [tidyTuesday](https://github.com/rfordatascience/tidytuesday) project.
+
+```{r}
+# download directly off tidytuesdaygithub repo
+
+rent <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-07-05/rent.csv')
+
+```
+
+What are the variable types? Do they all correspond to what they really are? Which variables have most missing values?
+
+```{r skim_data}
+# Load packages and data
+library(tidyverse)
+library(skimr)
+library(lubridate)
+
+rent <- readr::read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-07-05/rent.csv")
+
+skimr::skim(rent)
+
+```
+
+Make a plot that shows the top 20 cities in terms of % of classifieds between 2000-2018. You need to calculate the number of listings by city, and then convert that number to a %.
+
+```{r top_cities}
+# Count listings by city and calculate % of total
+top_cities <- rent %>%
+  filter(!is.na(city)) %>%
+  count(city) %>%
+  mutate(percent = n / sum(n) * 100) %>%
+  arrange(desc(percent)) %>%
+  slice_max(percent, n = 20)
+
+# Plot
+top_cities %>%
+  ggplot(aes(x = reorder(city, percent), y = percent)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Top 20 Cities by % of Craigslist Rental Listings (2000–2018)",
+    x = "City", y = "Percentage of Listings"
+  ) +
+  theme_minimal()
+
+
+
+```
+
+Make a plot that shows the evolution of median prices in San Francisco for 0, 1, 2, and 3 bedrooms listings. The final graph should look like this
+
+```{r sf_median_prices}
+
+sf_prices <- rent %>%
+  filter(
+    city == "san francisco",
+    beds %in% 0:3,
+    !is.na(price),
+    !is.na(year)
+  ) %>%
+  group_by(year, beds) %>%
+  summarise(median_price = median(price, na.rm = TRUE), .groups = "drop")
+
+# Plot
+ggplot(sf_prices, aes(x = year, y = median_price, color = as.factor(beds))) +
+  geom_line(size = 1) +
+  labs(
+    title = "Median Rent in San Francisco (2000–2018)",
+    subtitle = "Grouped by Number of Bedrooms (0–3)",
+    x = "Year", y = "Median Rent (USD)",
+    color = "Bedrooms"
+  ) +
+  theme_minimal()
+
+
+
+```
+
+Finally, make a plot that shows median rental prices for one-bed flats in the top 12 cities (by number of ads) in the Bay area. Your final graph should look like this
+
+```{r spirit_plot}
+# Step 1: Get top 12 cities by total listings
+top_12_cities <- rent %>%
+  count(city, sort = TRUE) %>%
+  slice_max(n, n = 12) %>%
+  pull(city)
+
+# Step 2: Filter to 1-bedroom listings in those cities
+one_bed_prices <- rent %>%
+  filter(
+    city %in% top_12_cities,
+    beds == 1,
+    !is.na(price),
+    !is.na(year)
+  ) %>%
+  group_by(city, year) %>%
+  summarise(median_price = median(price, na.rm = TRUE), .groups = "drop")
+
+# Step 3: Plot
+ggplot(one_bed_prices, aes(x = year, y = median_price, color = city)) +
+  geom_line(size = 1) +
+  labs(
+    title = "Median 1-Bedroom Rent in Top 12 Bay Area Cities (2000–2018)",
+    x = "Year", y = "Median Rent (USD)",
+    color = "City"
+  ) +
+  theme_minimal()
+
+
+```
+
+What can you infer from these plots? Don't just explain what's in the graph, but speculate or tell a short story (1-2 paragraphs max).
+
+The plots clearly illustrate a region-wide increase in rental prices from 2010 onward. While San Francisco consistently has the highest rent, cities like Oakland, Berkeley, and Palo Alto are not far behind by 2018. This reflects both rising demand and constrained housing supply throughout the Bay Area.
+
+The synchronized upward trends suggest that price pressures are spreading outward, making it harder for lower-income renters to find affordable housing, even in traditionally less expensive cities. This supports the idea that housing issues are regional, not just local to San Francisco.
+
+## Challenge
+
+How would you go about creating this?
+
+To make this visual, I'd:
+
+Filter the listings to those with good lat and lon values.
+
+Optionally use round coordates or neighborhoods for more visually pleasing plotting.
+
+Compute median rent by location and year.
+
+Plot price as color intensity over time using ggplot2 and geom_tile() or geom_point().
+
+It would be cool to either use facet_wrap(\~ year), or animate the year dimension and see change.
+
+If you’re looking for something more advanced, I would probably use sf, ggmap, leaflet or something similar to make an interactive or geographic map visualizing rent heat across the regions mentioned in this article.
+
+# Deliverables
+
+There is a lot of explanatory text, comments, etc. You do not need these, so delete them and produce a stand-alone document that you could share with someone. Render the edited and completed Quarto Markdown (qmd) file as a Word document (use the "Render" button at the top of the script editor window) and upload it to Canvas. You must be commiting and pushing tour changes to your own Github repo as you go along.
+
+# Details
+
+-   Who did you collaborate with: N/A
+-   Approximately how much time did you spend on this problem set: 3 hours
+-   What, if anything, gave you the most trouble: N/A
+
+**Please seek out help when you need it,** and remember the [15-minute rule](https://mam2022.netlify.app/syllabus/#the-15-minute-rule){target="_blank"}. You know enough R (and have enough examples of code from class and your readings) to be able to do this. If you get stuck, ask for help from others, post a question on Slack-- and remember that I am here to help too!
+
+> As a true test to yourself, do you understand the code you submitted and are you able to explain it to someone else?
+
+Yes
+
+# Rubric
+
+13/13: Problem set is 100% completed. Every question was attempted and answered, and most answers are correct. Code is well-documented (both self-documented and with additional comments as necessary). Used tidyverse, instead of base R. Graphs and tables are properly labelled. Analysis is clear and easy to follow, either because graphs are labeled clearly or you've written additional text to describe how you interpret the output. Multiple Github commits. Work is exceptional. I will not assign these often.
+
+8/13: Problem set is 60--80% complete and most answers are correct. This is the expected level of performance. Solid effort. Hits all the elements. No clear mistakes. Easy to follow (both the code and the output). A few Github commits.
+
+5/13: Problem set is less than 60% complete and/or most answers are incorrect. This indicates that you need to improve next time. I will hopefully not assign these often. Displays minimal effort. Doesn't complete all components. Code is poorly written and not documented. Uses the same type of plot for each graph, or doesn't use plots appropriate for the variables being analyzed. No Github commits.
